@@ -1,0 +1,41 @@
+# Core AI / LangChain
+langchain
+langchain-core
+langchain-community
+langchain-text-splitters
+langchain-groq
+langgraph
+
+# RAG / Vector Database
+chromadb
+langchain-chroma
+
+# Embeddings / Reranking
+sentence-transformers
+langchain-huggingface
+rank-bm25
+
+# Web Research
+tavily-python
+
+# Backend
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+python-multipart
+
+# Environment / HTTP
+python-dotenv
+httpx
+
+# Integrations
+notion-client
+hubspot-api-client
+
+# Testing
+pytest
+pytest-asyncio
+
+# Observability
+langsmith
