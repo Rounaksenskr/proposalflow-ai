@@ -2,7 +2,7 @@ from langgraph.graph import StateGraph, START, END
 from proposal_bot.state import ProposalState
 
 
-# --- Mock Node Handlers ---
+# --- Default Node Handlers ---
 
 def ingestion_node(state: ProposalState) -> dict:
     print("[Node: Ingest] Validating lead input...")
@@ -29,7 +29,6 @@ def proposal_generator_node(state: ProposalState) -> dict:
     attempt = state.get("retry_count", 0) + 1
     print(f"[Node: Generator] Synthesizing proposal draft (Iteration #{attempt})...")
     
-    # Read latest critic feedback if retrying
     critique_context = ""
     if state.get("critic_logs"):
         latest = state["critic_logs"][-1]
@@ -54,7 +53,6 @@ def critic_node(state: ProposalState) -> dict:
     retries = state.get("retry_count", 0)
     print(f"[Node: Critic] Evaluating proposal draft against requirements (Retry Count: {retries})...")
 
-    # Simulate failure on iteration 0, pass on iteration 1
     if retries == 0:
         feedback = {
             "passed": False,
@@ -99,13 +97,18 @@ def route_critic_decision(state: ProposalState) -> str:
 
 # --- Graph Construction ---
 
-def create_proposal_graph():
+def create_proposal_graph(
+    custom_ingest=None,
+    custom_research=None,
+    custom_generator=None,
+    custom_critic=None,
+):
     workflow = StateGraph(ProposalState)
 
-    workflow.add_node("ingest", ingestion_node)
-    workflow.add_node("research", research_node)
-    workflow.add_node("generator", proposal_generator_node)
-    workflow.add_node("critic", critic_node)
+    workflow.add_node("ingest", custom_ingest or ingestion_node)
+    workflow.add_node("research", custom_research or research_node)
+    workflow.add_node("generator", custom_generator or proposal_generator_node)
+    workflow.add_node("critic", custom_critic or critic_node)
 
     workflow.add_edge(START, "ingest")
     workflow.add_edge("ingest", "research")
