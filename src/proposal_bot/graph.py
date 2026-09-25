@@ -2,21 +2,17 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.types import interrupt
 
 from proposal_bot.state import ProposalState
-
-# Day 2 Live Nodes
 from proposal_bot.nodes.ingestion import ingestion_node
 from proposal_bot.nodes.research import research_node
 from proposal_bot.nodes.retrieval import retrieval_node
-
-# Day 3 Live Nodes
 from proposal_bot.nodes.generator import proposal_generator_node
 from proposal_bot.nodes.critic import critic_node
+from proposal_bot.nodes.persist import persist_node
 
 
 # --- Human-in-the-Loop Review Node ---
 
 def human_review_node(state: ProposalState) -> dict:
-    """Suspends graph execution via interrupt() and waits for human approval."""
     proposal = state.get("proposal", {})
     print("\n" + "=" * 60)
     print("🚨 HUMAN-IN-THE-LOOP CHECKPOINT: PROPOSAL REQUIRES APPROVAL 🚨")
@@ -25,10 +21,8 @@ def human_review_node(state: ProposalState) -> dict:
     print(f"Scope: {proposal.get('scope_of_work')}")
     print(f"Tech Stack: {proposal.get('recommended_tech_stack')}")
     print(f"Pricing: {proposal.get('estimated_pricing')}")
-    print(f"Experience Cited: {proposal.get('relevant_experience')}")
     print("=" * 60)
 
-    # Interrupt execution; serializes and yields payload to the caller
     human_response = interrupt({
         "task": "review_proposal",
         "proposal": proposal,
@@ -46,7 +40,7 @@ def human_review_node(state: ProposalState) -> dict:
     }
 
 
-# --- Conditional Routing Logic ---
+# --- Routing Logic ---
 
 def route_critic_decision(state: ProposalState) -> str:
     latest_review = state["critic_logs"][-1]
@@ -75,25 +69,26 @@ def create_proposal_graph(
     custom_generator=None,
     custom_critic=None,
     custom_human=None,
+    custom_persist=None,
 ):
     workflow = StateGraph(ProposalState)
 
-    # Register all 6 pipeline nodes
+    # Register all 7 nodes
     workflow.add_node("ingest", custom_ingest or ingestion_node)
     workflow.add_node("research", custom_research or research_node)
     workflow.add_node("retrieval", custom_retrieval or retrieval_node)
     workflow.add_node("generator", custom_generator or proposal_generator_node)
     workflow.add_node("critic", custom_critic or critic_node)
     workflow.add_node("human_review", custom_human or human_review_node)
+    workflow.add_node("persist", custom_persist or persist_node)
 
-    # Execution Flow: Ingest -> Research -> Retrieval -> Generator -> Critic
+    # Flow
     workflow.add_edge(START, "ingest")
     workflow.add_edge("ingest", "research")
     workflow.add_edge("research", "retrieval")
     workflow.add_edge("retrieval", "generator")
     workflow.add_edge("generator", "critic")
 
-    # Conditional Reflection Edge
     workflow.add_conditional_edges(
         "critic",
         route_critic_decision,
@@ -103,7 +98,7 @@ def create_proposal_graph(
         }
     )
 
-    # Human review leads to terminal END
-    workflow.add_edge("human_review", END)
+    workflow.add_edge("human_review", "persist")
+    workflow.add_edge("persist", END)
 
     return workflow.compile(checkpointer=checkpointer)
