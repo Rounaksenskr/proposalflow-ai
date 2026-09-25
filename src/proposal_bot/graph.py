@@ -1,67 +1,48 @@
 from langgraph.graph import StateGraph, START, END
+from langgraph.types import interrupt
+
 from proposal_bot.state import ProposalState
 
 # Day 2 Live Nodes
+from proposal_bot.nodes.ingestion import ingestion_node
 from proposal_bot.nodes.research import research_node
 from proposal_bot.nodes.retrieval import retrieval_node
 
-
-# --- Ingestion Node ---
-
-def ingestion_node(state: ProposalState) -> dict:
-    print("[Node: Ingest] Validating inbound lead payload...")
-    lead = state.get("lead", {})
-    if not lead.get("client_name") or not lead.get("project_description"):
-        raise ValueError("Lead missing required client_name or project_description.")
-    return {"final_status": "in_progress"}
+# Day 3 Live Nodes
+from proposal_bot.nodes.generator import proposal_generator_node
+from proposal_bot.nodes.critic import critic_node
 
 
-# --- Mock Generator & Critic (Targeted for Day 3 LLM implementation) ---
+# --- Human-in-the-Loop Review Node ---
 
-def mock_proposal_generator_node(state: ProposalState) -> dict:
-    attempt = state.get("retry_count", 0) + 1
-    retrieved = state.get("retrieved_cases", [])
-    case_titles = [c.get("title", "") for c in retrieved]
-    
-    print(f"[Node: Generator] Synthesizing proposal draft (Iteration #{attempt})...")
-    print(f"[Node: Generator] Citing retrieved case studies: {case_titles}")
+def human_review_node(state: ProposalState) -> dict:
+    """Suspends graph execution via interrupt() and waits for human approval."""
+    proposal = state.get("proposal", {})
+    print("\n" + "=" * 60)
+    print("🚨 HUMAN-IN-THE-LOOP CHECKPOINT: PROPOSAL REQUIRES APPROVAL 🚨")
+    print("=" * 60)
+    print(f"Executive Summary: {proposal.get('executive_summary')}")
+    print(f"Scope: {proposal.get('scope_of_work')}")
+    print(f"Tech Stack: {proposal.get('recommended_tech_stack')}")
+    print(f"Pricing: {proposal.get('estimated_pricing')}")
+    print(f"Experience Cited: {proposal.get('relevant_experience')}")
+    print("=" * 60)
 
-    critique_context = ""
-    if state.get("critic_logs"):
-        latest = state["critic_logs"][-1]
-        critique_context = f" Addressing feedback: {latest.get('actionable_revisions')}"
+    # Interrupt execution; serializes and yields payload to the caller
+    human_response = interrupt({
+        "task": "review_proposal",
+        "proposal": proposal,
+    })
 
-    mock_proposal = {
-        "executive_summary": f"Custom logistics management platform.{critique_context}",
-        "scope_of_work": [
-            "Architecture & Database Schema Design",
-            "FastAPI REST Endpoints",
-            "Interactive Dashboard Frontend"
-        ],
-        "recommended_tech_stack": ["FastAPI", "React", "PostgreSQL", "Docker"],
-        "timeline_and_phases": "4 weeks across two 2-week sprints",
-        "estimated_pricing": state["lead"].get("budget") or "$3,500",
-        "relevant_experience": f"Delivered similar solutions: {', '.join(case_titles) if case_titles else 'Internal portfolio cases'}"
-    }
-    return {"proposal": mock_proposal}
+    approved = human_response.get("approved", False)
+    notes = human_response.get("feedback", "")
 
-
-def mock_critic_node(state: ProposalState) -> dict:
-    retries = state.get("retry_count", 0)
-    print(f"[Node: Critic] Evaluating proposal draft against requirements (Retry Count: {retries})...")
-
-    # In Day 2 integration, approve on first run to verify the linear data pipeline
-    feedback = {
-        "passed": True,
-        "score": 9,
-        "missing_requirements": [],
-        "hallucinated_claims": [],
-        "actionable_revisions": []
-    }
+    print(f"\n[Node: Human Review] Decision received: Approved={approved}, Notes='{notes}'")
 
     return {
-        "critic_logs": [feedback],
-        "retry_count": retries + 1
+        "human_approved": approved,
+        "human_feedback": notes,
+        "final_status": "approved" if approved else "rejected",
     }
 
 
@@ -73,36 +54,39 @@ def route_critic_decision(state: ProposalState) -> str:
     retries = state.get("retry_count", 0)
 
     if passed:
-        print("[Router: Decision] Critic PASSED -> Reached acceptance criteria.")
-        return "approved"
+        print("[Router: Decision] Critic PASSED -> Routing to Human Review.")
+        return "human_review"
 
     if retries >= 2:
-        print("[Router: Decision] Retry limit hit (>= 2) -> Breaking loop.")
-        return "max_retries_exceeded"
+        print("[Router: Decision] Circuit Breaker hit (>= 2 retries) -> Escalating to Human Review.")
+        return "human_review"
 
     print("[Router: Decision] Critic FAILED -> Routing back to Generator for self-correction.")
-    return "regenerate"
+    return "generator"
 
 
-# --- Graph Construction ---
+# --- Graph Factory ---
 
 def create_proposal_graph(
+    checkpointer=None,
     custom_ingest=None,
     custom_research=None,
     custom_retrieval=None,
     custom_generator=None,
     custom_critic=None,
+    custom_human=None,
 ):
     workflow = StateGraph(ProposalState)
 
-    # Register all 5 pipeline nodes
+    # Register all 6 pipeline nodes
     workflow.add_node("ingest", custom_ingest or ingestion_node)
     workflow.add_node("research", custom_research or research_node)
     workflow.add_node("retrieval", custom_retrieval or retrieval_node)
-    workflow.add_node("generator", custom_generator or mock_proposal_generator_node)
-    workflow.add_node("critic", custom_critic or mock_critic_node)
+    workflow.add_node("generator", custom_generator or proposal_generator_node)
+    workflow.add_node("critic", custom_critic or critic_node)
+    workflow.add_node("human_review", custom_human or human_review_node)
 
-    # Edge Connections: Ingest -> Research -> Retrieval -> Generator -> Critic
+    # Execution Flow: Ingest -> Research -> Retrieval -> Generator -> Critic
     workflow.add_edge(START, "ingest")
     workflow.add_edge("ingest", "research")
     workflow.add_edge("research", "retrieval")
@@ -114,10 +98,12 @@ def create_proposal_graph(
         "critic",
         route_critic_decision,
         {
-            "regenerate": "generator",
-            "approved": END,
-            "max_retries_exceeded": END,
+            "generator": "generator",
+            "human_review": "human_review",
         }
     )
 
-    return workflow.compile()
+    # Human review leads to terminal END
+    workflow.add_edge("human_review", END)
+
+    return workflow.compile(checkpointer=checkpointer)
