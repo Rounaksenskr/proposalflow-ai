@@ -1,34 +1,31 @@
 from langgraph.graph import StateGraph, START, END
 from proposal_bot.state import ProposalState
 
+# Day 2 Live Nodes
+from proposal_bot.nodes.research import research_node
+from proposal_bot.nodes.retrieval import retrieval_node
 
-# --- Default Node Handlers ---
+
+# --- Ingestion Node ---
 
 def ingestion_node(state: ProposalState) -> dict:
-    print("[Node: Ingest] Validating lead input...")
+    print("[Node: Ingest] Validating inbound lead payload...")
     lead = state.get("lead", {})
     if not lead.get("client_name") or not lead.get("project_description"):
         raise ValueError("Lead missing required client_name or project_description.")
     return {"final_status": "in_progress"}
 
 
-def research_node(state: ProposalState) -> dict:
-    client_name = state["lead"].get("client_name", "Unknown")
-    print(f"[Node: Research] Generating mock intelligence profile for '{client_name}'...")
-    mock_research = {
-        "company_summary": f"{client_name} specializes in logistics and freight tracking.",
-        "industry": "Supply Chain & Logistics",
-        "pain_points": ["Manual spreadsheet updates", "Lack of real-time shipment alerts"],
-        "identified_tech": ["PostgreSQL", "Legacy Excel"],
-        "source_urls": ["https://example.com/company"]
-    }
-    return {"research": mock_research}
+# --- Mock Generator & Critic (Targeted for Day 3 LLM implementation) ---
 
-
-def proposal_generator_node(state: ProposalState) -> dict:
+def mock_proposal_generator_node(state: ProposalState) -> dict:
     attempt = state.get("retry_count", 0) + 1
-    print(f"[Node: Generator] Synthesizing proposal draft (Iteration #{attempt})...")
+    retrieved = state.get("retrieved_cases", [])
+    case_titles = [c.get("title", "") for c in retrieved]
     
+    print(f"[Node: Generator] Synthesizing proposal draft (Iteration #{attempt})...")
+    print(f"[Node: Generator] Citing retrieved case studies: {case_titles}")
+
     critique_context = ""
     if state.get("critic_logs"):
         latest = state["critic_logs"][-1]
@@ -44,31 +41,23 @@ def proposal_generator_node(state: ProposalState) -> dict:
         "recommended_tech_stack": ["FastAPI", "React", "PostgreSQL", "Docker"],
         "timeline_and_phases": "4 weeks across two 2-week sprints",
         "estimated_pricing": state["lead"].get("budget") or "$3,500",
-        "relevant_experience": "Built real-time tracking engine for Regional Freight Corp."
+        "relevant_experience": f"Delivered similar solutions: {', '.join(case_titles) if case_titles else 'Internal portfolio cases'}"
     }
     return {"proposal": mock_proposal}
 
 
-def critic_node(state: ProposalState) -> dict:
+def mock_critic_node(state: ProposalState) -> dict:
     retries = state.get("retry_count", 0)
     print(f"[Node: Critic] Evaluating proposal draft against requirements (Retry Count: {retries})...")
 
-    if retries == 0:
-        feedback = {
-            "passed": False,
-            "score": 6,
-            "missing_requirements": ["Authentication specifics omitted."],
-            "hallucinated_claims": [],
-            "actionable_revisions": ["Explicitly mention JWT auth and role-based access control."]
-        }
-    else:
-        feedback = {
-            "passed": True,
-            "score": 9,
-            "missing_requirements": [],
-            "hallucinated_claims": [],
-            "actionable_revisions": []
-        }
+    # In Day 2 integration, approve on first run to verify the linear data pipeline
+    feedback = {
+        "passed": True,
+        "score": 9,
+        "missing_requirements": [],
+        "hallucinated_claims": [],
+        "actionable_revisions": []
+    }
 
     return {
         "critic_logs": [feedback],
@@ -100,21 +89,27 @@ def route_critic_decision(state: ProposalState) -> str:
 def create_proposal_graph(
     custom_ingest=None,
     custom_research=None,
+    custom_retrieval=None,
     custom_generator=None,
     custom_critic=None,
 ):
     workflow = StateGraph(ProposalState)
 
+    # Register all 5 pipeline nodes
     workflow.add_node("ingest", custom_ingest or ingestion_node)
     workflow.add_node("research", custom_research or research_node)
-    workflow.add_node("generator", custom_generator or proposal_generator_node)
-    workflow.add_node("critic", custom_critic or critic_node)
+    workflow.add_node("retrieval", custom_retrieval or retrieval_node)
+    workflow.add_node("generator", custom_generator or mock_proposal_generator_node)
+    workflow.add_node("critic", custom_critic or mock_critic_node)
 
+    # Edge Connections: Ingest -> Research -> Retrieval -> Generator -> Critic
     workflow.add_edge(START, "ingest")
     workflow.add_edge("ingest", "research")
-    workflow.add_edge("research", "generator")
+    workflow.add_edge("research", "retrieval")
+    workflow.add_edge("retrieval", "generator")
     workflow.add_edge("generator", "critic")
 
+    # Conditional Reflection Edge
     workflow.add_conditional_edges(
         "critic",
         route_critic_decision,

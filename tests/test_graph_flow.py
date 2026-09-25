@@ -21,9 +21,9 @@ def base_lead_state():
 
 
 def test_graph_terminates_on_max_retries(base_lead_state):
-    """Ensure the loop terminates cleanly after 2 retries if critic keeps failing."""
+    """Ensure the loop terminates cleanly after 2 retries when critic consistently fails."""
 
-    def always_fail_critic(state):
+    def mock_failing_critic(state):
         retries = state.get("retry_count", 0)
         return {
             "critic_logs": [{
@@ -36,8 +36,19 @@ def test_graph_terminates_on_max_retries(base_lead_state):
             "retry_count": retries + 1
         }
 
-    # Pass the failing critic directly into the graph factory
-    app = create_proposal_graph(custom_critic=always_fail_critic)
+    # Pass mock research and retrieval so external network calls are avoided during testing
+    def mock_research(state):
+        return {"research": {"company_summary": "Test Co", "industry": "Logistics"}}
+
+    def mock_retrieval(state):
+        return {"retrieved_cases": [{"title": "Past Project 1", "id": "proj-001"}]}
+
+    app = create_proposal_graph(
+        custom_research=mock_research,
+        custom_retrieval=mock_retrieval,
+        custom_critic=mock_failing_critic,
+    )
+
     final_state = app.invoke(base_lead_state)
 
     assert final_state["retry_count"] == 2
