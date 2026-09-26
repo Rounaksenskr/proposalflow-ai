@@ -89,14 +89,27 @@ if thread_id_input.strip():
                 with st.expander("Executive Summary", expanded=True):
                     st.write(proposal.get("executive_summary", "No summary generated."))
 
-                with st.expander("Solution Architecture", expanded=True):
-                    st.write(proposal.get("solution_architecture", "No architecture provided."))
+                with st.expander("Scope of Work", expanded=True):
+                    scope = proposal.get("scope_of_work", [])
+                    if scope:
+                        for item in scope:
+                            st.write(f"- {item}")
+                    else:
+                        st.write("No scope provided.")
 
-                m1, m2 = st.columns(2)
-                with m1:
-                    st.metric("Estimated Pricing", proposal.get("estimated_pricing", "N/A"))
-                with m2:
-                    st.metric("Estimated Timeline", proposal.get("project_timeline", "N/A"))
+                with st.expander("Recommended Tech Stack", expanded=False):
+                    stack = proposal.get("recommended_tech_stack", [])
+                    st.write(", ".join(stack) if stack else "N/A")
+
+                st.metric("Estimated Pricing", proposal.get("estimated_pricing", "N/A"))
+
+                with st.expander("Timeline", expanded=True):
+                    timeline = proposal.get("timeline_and_phases", "N/A")
+                    normalized = timeline.replace("\\n", "\n") if isinstance(timeline, str) else str(timeline)
+                    for line in normalized.split("\n"):
+                        line = line.strip()
+                        if line:
+                            st.write(line)
 
             with col_sidebar:
                 st.subheader("🧐 Critic Reflection Log")
@@ -106,9 +119,15 @@ if thread_id_input.strip():
                     st.metric("Adversarial Score", f"{score}/10")
                     st.markdown(f"**Passed**: `{latest.get('passed', False)}`")
 
-                    revisions = latest.get("revisions_required", [])
+                    missing = latest.get("missing_requirements", [])
+                    if missing:
+                        st.markdown("**Missing Requirements:**")
+                        for m in missing:
+                            st.write(f"- {m}")
+
+                    revisions = latest.get("actionable_revisions", [])
                     if revisions:
-                        st.markdown("**Required Revisions Flagged:**")
+                        st.markdown("**Actionable Revisions:**")
                         for rev in revisions:
                             st.write(f"- {rev}")
                 else:

@@ -48,6 +48,13 @@ def proposal_generator_node(state: ProposalState) -> dict:
             + "\n".join(f"- {rev}" for rev in latest.get("actionable_revisions", []))
         )
 
+    # On a revision, give the model its own last draft so it edits in place
+    # instead of regenerating every field from scratch.
+    current_draft_text = "None — this is the first draft."
+    if critic_logs:
+        current_proposal = state.get("proposal") or {}
+        current_draft_text = json.dumps(current_proposal, indent=2)
+
     user_prompt = PROPOSAL_GENERATOR_USER_PROMPT.format(
         client_name=lead.get("client_name", "Prospective Client"),
         website=lead.get("website", "N/A"),
@@ -60,6 +67,7 @@ def proposal_generator_node(state: ProposalState) -> dict:
         identified_tech=", ".join(research.get("identified_tech", [])) or "N/A",
         retrieved_cases=cases_text.strip(),
         critic_feedback=critique_text,
+        current_draft=current_draft_text,
     )
 
     llm = ChatGroq(

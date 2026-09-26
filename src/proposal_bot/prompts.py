@@ -28,6 +28,7 @@ CRITICAL RULES:
 2. When referencing past work in `relevant_experience`, ONLY cite details from the provided Case Studies. DO NOT invent previous clients or projects.
 3. Address the client's stated budget and timeline realistic to the scope.
 4. If previous Critic Feedback is provided, you MUST directly address each actionable revision in your new draft.
+5. If a Current Draft is provided, treat it as your baseline: preserve every field's content exactly as-is UNLESS the critic feedback calls for a change, or the change is needed for consistency with a fix you're making elsewhere. Never drop or blank out a field the critic did not flag.
 
 Return your response strictly conforming to the ProposalDraft schema.
 """
@@ -50,6 +51,9 @@ Identified Tech Stack: {identified_tech}
 
 ### 4. Previous Critic Feedback (if any)
 {critic_feedback}
+
+### 5. Current Draft (if any) — revise this in place; keep every field not called out above
+{current_draft}
 """
 
 CRITIC_SYSTEM_PROMPT = """You are a rigorous, adversarial technical review director.
