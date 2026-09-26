@@ -12,7 +12,8 @@ class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Enforce uniqueness to prevent duplicate clients under concurrent requests
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
     website: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
@@ -43,7 +44,7 @@ class Proposal(Base):
     __tablename__ = "proposals"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("leads.id"), nullable=False)
+    lead_id: Mapped[int] = mapped_column(Integer, ForeignKey("leads.id"), unique=True, index=True, nullable=False)
     research_summary: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     retrieved_case_ids: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     proposal_content: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False)

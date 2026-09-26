@@ -55,9 +55,16 @@ class ProposalState(TypedDict):
     research: Optional[Dict[str, Any]]
     retrieved_cases: List[Dict[str, Any]]
     proposal: Optional[Dict[str, Any]]
+
     # Preserves append-only reflection history across retries
     critic_logs: Annotated[List[Dict[str, Any]], operator.add]
-    retry_count: int
+
+    # Explicit decoupled counters
+    critic_attempts: int   # Number of evaluations run by critic
+    revision_count: int    # Number of actual regenerations run by generator
+    retry_count: int       # Backward compatibility alias
+
+    # Human-in-the-loop fields
     human_approved: Optional[bool]
     human_feedback: Optional[str]
     final_status: str

@@ -1,4 +1,5 @@
 import json
+import logging
 from langchain_groq import ChatGroq
 
 from proposal_bot.config import settings
@@ -8,10 +9,19 @@ from proposal_bot.prompts import (
     PROPOSAL_GENERATOR_USER_PROMPT,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def proposal_generator_node(state: ProposalState) -> dict:
-    attempt = state.get("retry_count", 0) + 1
-    print(f"\n[Node: Generator] Synthesizing proposal draft (Iteration #{attempt})...")
+    critic_logs = state.get("critic_logs", [])
+    current_revisions = state.get("revision_count", 0)
+
+    # If critic logs exist, this invocation is a revision
+    if critic_logs:
+        current_revisions += 1
+        print(f"\n[Node: Generator] Revising proposal draft (Revision #{current_revisions})...")
+    else:
+        print("\n[Node: Generator] Synthesizing initial proposal draft...")
 
     lead = state.get("lead", {})
     research = state.get("research", {}) or {}
@@ -28,12 +38,12 @@ def proposal_generator_node(state: ProposalState) -> dict:
     if not cases_text:
         cases_text = "No internal case studies found. Ground strictly on standard best practices."
 
-    # Format previous critique if available
+    # Format previous critique safely
     critique_text = "First iteration. No prior critiques."
-    if state.get("critic_logs"):
-        latest = state["critic_logs"][-1]
+    if critic_logs:
+        latest = critic_logs[-1]
         critique_text = (
-            f"Previous Score: {latest.get('score')}/10\n"
+            f"Previous Score: {latest.get('score', 0)}/10\n"
             f"Required Revisions:\n"
             + "\n".join(f"- {rev}" for rev in latest.get("actionable_revisions", []))
         )
@@ -58,9 +68,25 @@ def proposal_generator_node(state: ProposalState) -> dict:
         temperature=0.2,
     ).with_structured_output(ProposalDraft)
 
-    proposal: ProposalDraft = llm.invoke([
-        {"role": "system", "content": PROPOSAL_GENERATOR_SYSTEM_PROMPT},
-        {"role": "user", "content": user_prompt},
-    ])
+    try:
+        proposal: ProposalDraft = llm.invoke([
+            {"role": "system", "content": PROPOSAL_GENERATOR_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt},
+        ])
+        proposal_dict = proposal.model_dump()
+    except Exception as exc:
+        logger.error("[Node: Generator] LLM generation or validation failed: %s", exc)
+        print(f"[Node: Generator] WARNING: Proposal synthesis failed ({exc}). Using fallback draft.")
+        proposal_dict = {
+            "executive_summary": f"Draft proposal for {lead.get('client_name', 'Client')}. Automated synthesis encountered a temporary model issue.",
+            "scope_of_work": ["Requirements analysis", "Implementation architecture", "Final delivery"],
+            "recommended_tech_stack": ["Python", "FastAPI"],
+            "timeline_and_phases": "Phase 1: Discovery (1 week), Phase 2: Implementation (3 weeks)",
+            "estimated_pricing": lead.get("budget", "To be finalized upon technical discovery"),
+            "relevant_experience": "Experience with modern scalable cloud integrations.",
+        }
 
-    return {"proposal": proposal.model_dump()}
+    return {
+        "proposal": proposal_dict,
+        "revision_count": current_revisions,
+    }
