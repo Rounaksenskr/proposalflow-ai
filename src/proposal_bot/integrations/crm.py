@@ -1,12 +1,25 @@
 import os
 import logging
 from typing import Dict, Any, Optional
+
 import httpx
+from dotenv import load_dotenv, find_dotenv
+
+# Load variables from the .env file in the current working directory (same place
+# config.py looks) into os.environ.
+# override=False -> real environment variables (shell, Docker, CI) always win.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 logger = logging.getLogger(__name__)
 
-CRM_API_URL = os.getenv("CRM_API_URL")
-CRM_API_KEY = os.getenv("CRM_API_KEY")
+
+def _get_crm_url() -> Optional[str]:
+    """Read at call time so .env / late-set environment variables are honoured."""
+    return os.getenv("CRM_API_URL") or None
+
+
+def _get_crm_key() -> Optional[str]:
+    return os.getenv("CRM_API_KEY") or None
 
 
 def sync_proposal_to_crm(
@@ -21,8 +34,8 @@ def sync_proposal_to_crm(
     Syncs approved client and proposal deal records to an external CRM.
     Returns True if successfully synchronized or False if bypassed / failed.
     """
-    target_url = api_url or CRM_API_URL
-    token = api_key or CRM_API_KEY
+    target_url = api_url or _get_crm_url()
+    token = api_key or _get_crm_key()
 
     if not target_url:
         logger.info("[CRM Sync] No CRM_API_URL configured. Skipping CRM synchronization.")
@@ -34,6 +47,7 @@ def sync_proposal_to_crm(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
+    lead_data = lead_data or {}
     client_name = lead_data.get("client_name", "Unknown Client")
     proposal = proposal_data or {}
 

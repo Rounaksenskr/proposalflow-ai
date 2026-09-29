@@ -7,7 +7,7 @@ from proposal_bot.config import settings
 from proposal_bot.state import ProposalState, ResearchArtifact
 from proposal_bot.prompts import RESEARCH_SYSTEM_PROMPT, RESEARCH_USER_PROMPT
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__) #records logs
 
 
 def build_tavily_query(client_name: str, website: str, description: str) -> str:

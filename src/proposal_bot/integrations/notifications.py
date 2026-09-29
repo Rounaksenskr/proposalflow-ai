@@ -1,12 +1,21 @@
 import os
-import json
 import logging
 from typing import Dict, Any, Optional
+
 import httpx
+from dotenv import load_dotenv, find_dotenv
+
+# Load variables from the .env file in the current working directory (same place
+# config.py looks) into os.environ.
+# override=False -> real environment variables (shell, Docker, CI) always win.
+load_dotenv(find_dotenv(usecwd=True), override=False)
 
 logger = logging.getLogger(__name__)
 
-WEBHOOK_URL = os.getenv("NOTIFICATIONS_WEBHOOK_URL") or os.getenv("SLACK_WEBHOOK_URL")
+
+def _get_webhook_url() -> Optional[str]:
+    """Read at call time so .env / late-set environment variables are honoured."""
+    return os.getenv("NOTIFICATIONS_WEBHOOK_URL") or os.getenv("SLACK_WEBHOOK_URL") or None
 
 
 def send_review_needed_notification(
@@ -20,16 +29,20 @@ def send_review_needed_notification(
     Sends a formatted notification to a webhook endpoint alerting reviewers
     that a proposal is paused and waiting for human sign-off.
     """
-    target_url = webhook_url or WEBHOOK_URL
+    target_url = webhook_url or _get_webhook_url()
     if not target_url:
         logger.info("[Notifications] No webhook URL configured. Skipping review alert.")
         return False
 
+    lead = lead or {}
     client_name = lead.get("client_name", "Unknown Client")
     budget = lead.get("budget", "N/A")
-    deadline = lead.get("deadline", "N/A")
     summary = proposal.get("executive_summary", "No summary provided.") if proposal else "Draft unavailable."
     score = critic_log.get("score", "N/A") if critic_log else "N/A"
+    score_text = f"{score}/10" if isinstance(score, (int, float)) else str(score)
+
+    # Only add an ellipsis when the summary was actually truncated.
+    summary_preview = summary[:300] + ("..." if len(summary) > 300 else "")
 
     # Standard Slack Block Kit payload (also renders cleanly on Slack-compatible webhooks)
     payload = {
@@ -49,14 +62,14 @@ def send_review_needed_notification(
                     {"type": "mrkdwn", "text": f"*Client:*\n{client_name}"},
                     {"type": "mrkdwn", "text": f"*Thread ID:*\n`{thread_id}`"},
                     {"type": "mrkdwn", "text": f"*Budget:*\n{budget}"},
-                    {"type": "mrkdwn", "text": f"*Critic Score:*\n{score}/10"},
+                    {"type": "mrkdwn", "text": f"*Critic Score:*\n{score_text}"},
                 ],
             },
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Executive Summary:*\n>{summary[:300]}...",
+                    "text": f"*Executive Summary:*\n>{summary_preview}",
                 },
             },
             {
@@ -96,11 +109,12 @@ def send_final_status_notification(
     webhook_url: Optional[str] = None,
 ) -> bool:
     """Dispatches a notification when a proposal has finalized (approved or rejected)."""
-    target_url = webhook_url or WEBHOOK_URL
+    target_url = webhook_url or _get_webhook_url()
     if not target_url:
+        logger.info("[Notifications] No webhook URL configured. Skipping final status alert.")
         return False
 
-    emoji = "✅" if status == "approved" or status == "persisted" else "❌"
+    emoji = "✅" if status in ("approved", "persisted") else "❌"
     payload = {
         "text": f"{emoji} Proposal for *{client_name}* finished with status: `{status}` (Thread: `{thread_id}`)"
     }
@@ -108,7 +122,14 @@ def send_final_status_notification(
     try:
         with httpx.Client(timeout=5.0) as client:
             resp = client.post(target_url, json=payload)
-            return resp.is_success
+            if resp.is_success:
+                return True
+            logger.warning(
+                "[Notifications] Webhook returned HTTP %s: %s",
+                resp.status_code,
+                resp.text,
+            )
+            return False
     except Exception as exc:
         logger.warning("[Notifications] Failed to send final status alert: %s", exc)
         return False
