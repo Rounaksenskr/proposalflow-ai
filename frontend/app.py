@@ -1,7 +1,160 @@
+import io
+import re
+from datetime import datetime
+from xml.sax.saxutils import escape
+
 import streamlit as st
 import httpx
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer
 
 API_BASE_URL = "http://127.0.0.1:8000/api"
+
+
+# ---------------------------------------------------------
+# PDF Generation (ReportLab)
+# ---------------------------------------------------------
+def _pdf_clean(value):
+    """Convert any value to safe plain text for ReportLab's built-in fonts."""
+    if value is None:
+        return ""
+    text = str(value).replace("\\n", "\n").strip()
+    # Built-in Helvetica has no glyph for the rupee sign; use a readable fallback.
+    text = text.replace("\u20b9", "INR ")
+    # Drop characters the built-in font cannot draw (e.g. emojis) instead of
+    # letting them render as black boxes.
+    return text.encode("cp1252", errors="ignore").decode("cp1252").strip()
+
+
+def _pdf_markup(value):
+    """Escape text for ReportLab Paragraph markup; supports **bold** and line breaks."""
+    text = escape(_pdf_clean(value))
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    return text.replace("\n", "<br/>")
+
+
+def _pdf_as_list(value):
+    """Normalize a field into a list of non-empty strings."""
+    if value is None:
+        return []
+    if isinstance(value, (list, tuple)):
+        items = value
+    elif isinstance(value, str):
+        items = value.replace("\\n", "\n").split("\n")
+    else:
+        items = [value]
+    cleaned = [_pdf_clean(item) for item in items]
+    return [item for item in cleaned if item]
+
+
+def generate_proposal_pdf(proposal, thread_id):
+    """Build a PDF for the given proposal dict and return it as bytes."""
+    proposal = proposal if isinstance(proposal, dict) else {}
+    safe_thread_id = _pdf_clean(thread_id) or "N/A"
+
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=20 * mm,
+        rightMargin=20 * mm,
+        topMargin=20 * mm,
+        bottomMargin=20 * mm,
+        title="Project Proposal",
+        author="ProposalFlow AI",
+    )
+
+    base = getSampleStyleSheet()
+    accent = colors.HexColor("#1F3A5F")
+
+    title_style = ParagraphStyle(
+        "ProposalTitle", parent=base["Title"], fontSize=22, leading=26,
+        textColor=accent, alignment=0, spaceAfter=4,
+    )
+    meta_style = ParagraphStyle(
+        "ProposalMeta", parent=base["Normal"], fontSize=9, leading=12,
+        textColor=colors.grey, spaceAfter=6,
+    )
+    heading_style = ParagraphStyle(
+        "ProposalHeading", parent=base["Heading2"], fontSize=13, leading=16,
+        textColor=accent, spaceBefore=14, spaceAfter=6, keepWithNext=1,
+    )
+    body_style = ParagraphStyle(
+        "ProposalBody", parent=base["Normal"], fontSize=10.5, leading=15,
+        spaceAfter=4,
+    )
+    bullet_style = ParagraphStyle(
+        "ProposalBullet", parent=body_style, leftIndent=14, bulletIndent=2,
+    )
+    price_style = ParagraphStyle(
+        "ProposalPrice", parent=body_style, fontName="Helvetica-Bold",
+        fontSize=13, leading=17, textColor=accent,
+    )
+
+    def add_bullets(story, items, empty_text):
+        if not items:
+            story.append(Paragraph(_pdf_markup(empty_text), body_style))
+            return
+        for item in items:
+            story.append(Paragraph(_pdf_markup(item), bullet_style, bulletText="\u2022"))
+
+    story = [
+        Paragraph("Project Proposal", title_style),
+        Paragraph(
+            f"Thread ID: {_pdf_markup(safe_thread_id)} &nbsp;|&nbsp; "
+            f"Generated: {datetime.now().strftime('%d %b %Y, %H:%M')}",
+            meta_style,
+        ),
+        HRFlowable(width="100%", thickness=1, color=accent, spaceAfter=4),
+    ]
+
+    # Executive Summary
+    story.append(Paragraph("Executive Summary", heading_style))
+    summary = _pdf_clean(proposal.get("executive_summary")) or "No summary generated."
+    story.append(Paragraph(_pdf_markup(summary), body_style))
+
+    # Scope of Work
+    story.append(Paragraph("Scope of Work", heading_style))
+    add_bullets(story, _pdf_as_list(proposal.get("scope_of_work")), "No scope provided.")
+
+    # Recommended Tech Stack
+    story.append(Paragraph("Recommended Tech Stack", heading_style))
+    stack_items = _pdf_as_list(proposal.get("recommended_tech_stack"))
+    stack_text = ", ".join(stack_items) if stack_items else "N/A"
+    story.append(Paragraph(_pdf_markup(stack_text), body_style))
+
+    # Estimated Pricing
+    story.append(Paragraph("Estimated Pricing", heading_style))
+    pricing = _pdf_clean(proposal.get("estimated_pricing")) or "N/A"
+    story.append(Paragraph(_pdf_markup(pricing), price_style))
+
+    # Timeline
+    story.append(Paragraph("Timeline", heading_style))
+    timeline_lines = _pdf_as_list(proposal.get("timeline_and_phases"))
+    if not timeline_lines:
+        story.append(Paragraph("N/A", body_style))
+    for line in timeline_lines:
+        if line.startswith(("- ", "* ")):
+            story.append(Paragraph(_pdf_markup(line[2:]), bullet_style, bulletText="\u2022"))
+        else:
+            story.append(Paragraph(_pdf_markup(line), body_style))
+
+    story.append(Spacer(1, 6))
+
+    def draw_footer(canvas, pdf_doc):
+        canvas.saveState()
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.grey)
+        canvas.drawString(20 * mm, 10 * mm, f"ProposalFlow AI  |  Thread {safe_thread_id}")
+        canvas.drawRightString(A4[0] - 20 * mm, 10 * mm, f"Page {pdf_doc.page}")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
+    return buffer.getvalue()
+
 
 st.set_page_config(
     page_title="ProposalFlow AI — Review Console",
@@ -110,6 +263,24 @@ if thread_id_input.strip():
                         line = line.strip()
                         if line:
                             st.write(line)
+
+                # Download Proposal as PDF
+                pdf_bytes = None
+                try:
+                    pdf_bytes = generate_proposal_pdf(proposal, tid)
+                except Exception as pdf_exc:
+                    st.error(f"Could not generate PDF: {pdf_exc}")
+
+                if pdf_bytes:
+                    safe_tid = re.sub(r"[^A-Za-z0-9_-]", "_", tid)
+                    st.download_button(
+                        label="📥 Download Proposal as PDF",
+                        data=pdf_bytes,
+                        file_name=f"proposal_{safe_tid}.pdf",
+                        mime="application/pdf",
+                        key=f"download_pdf_{safe_tid}",
+                        use_container_width=True,
+                    )
 
             with col_sidebar:
                 st.subheader("🧐 Critic Reflection Log")
